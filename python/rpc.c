@@ -101,7 +101,7 @@ process_reply_data(struct nc_reply *reply)
     PyObject *result, *data = NULL, *module;
 
     /* check the type of the received reply message */
-    if (reply->type != NC_RPL_DATA) {
+    if (reply->type != NC_RPL_DATA && reply->type != NC_RPL_OK) {
         if (reply->type == NC_RPL_ERROR) {
             RAISE_REPLY_ERROR(reply);
         } else {
@@ -300,4 +300,179 @@ ncRPCEditConfig(ncSessionObject *self, PyObject *args, PyObject *keywords)
 error:
     lyd_free(data);
     return NULL;
+}
+
+
+PyObject *
+ncRPCUser(ncSessionObject *self, PyObject *args, PyObject *keywords)
+{
+    static char *kwlist[] = {"data", NULL};
+    struct lyd_node *data = NULL, *content_tree = NULL;
+    const char *content_str = NULL;
+    const struct lys_module *ietfnc;
+    PyObject *content_o = NULL, *py_lyd_node;
+    struct nc_rpc *rpc;
+    struct nc_reply *reply;
+
+    ietfnc = ly_ctx_get_module(self->ctx, "ietf-netconf", NULL, 1);
+    if (!ietfnc) {
+        PyErr_SetString(libnetconf2Error, "Missing \"ietf-netconf\" schema in the context.");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTupleAndKeywords(args, keywords, "O:ncRPCUser", kwlist, &content_o)) {
+        return NULL;
+    }
+
+    if (PyUnicode_Check(content_o)) {
+        content_str = PyUnicode_AsUTF8(content_o);
+    } else if (SWIG_Python_GetSwigThis(content_o)) {
+        py_lyd_node = PyObject_CallMethod(content_o, "C_lyd_node", NULL);
+        if (!SWIG_IsOK(SWIG_Python_ConvertPtr(py_lyd_node, (void**)&content_tree, SWIG_Python_TypeQuery("lyd_node *"), SWIG_POINTER_DISOWN))) {
+            PyErr_SetString(PyExc_TypeError, "Invalid object representing <edit-config> content. Data_Node is accepted.");
+            goto error;
+        }
+    } else if (content_o != Py_None) {
+        PyErr_SetString(PyExc_TypeError, "Invalid object representing <edit-config> content. String or Data_Node is accepted.");
+        goto error;
+    }
+
+    if (content_str) {
+        rpc = nc_rpc_act_generic_xml(content_str, NC_PARAMTYPE_CONST);
+    } else if (content_tree) {
+        rpc = nc_rpc_act_generic(content_tree, NC_PARAMTYPE_CONST);
+    }
+
+    if (!rpc) {
+        goto error;
+    }
+
+    reply = rpc_send_recv(self->session, rpc);
+    nc_rpc_free(rpc);
+    if (!reply) {
+        return NULL;
+    }
+
+    fprintf(stderr, "reply->type: %d\n", reply->type);
+    lyd_print_file(stderr, ((struct nc_reply_data*)reply)->data, LYD_XML, LYP_FORMAT);
+    fprintf(stderr, "RPC PRINTED\n");
+    return process_reply_data(reply);
+
+#if 0
+    fprintf(stderr, "RPC SENDED\n");
+    lyd_print_file(stderr, ((struct nc_reply_data*)reply)->data, LYD_XML, LYP_FORMAT);
+    fprintf(stderr, "RPC PRINTED\n");
+
+    if (reply->type != NC_RPL_OK) {
+        if (reply->type == NC_RPL_ERROR) {
+            RAISE_REPLY_ERROR(reply);
+        } else {
+            PyErr_SetString(libnetconf2Error, "Unexpected reply received.");
+        }
+        goto error;
+    }
+
+    Py_RETURN_NONE;
+#endif
+
+    error:
+    lyd_free(data);
+    return NULL;
+
+}
+
+static PyObject *
+process_notif_data(const struct nc_notif *notif)
+{
+    PyObject *result, *data = NULL, *module;
+
+    // lyd_print_file(stderr, notif->tree, LYD_XML, LYP_FORMAT);
+
+    /* process the received data */
+    data = SWIG_NewPointerObj(notif->tree, SWIG_Python_TypeQuery("lyd_node*"), 0);
+    if (!data) {
+        PyErr_SetString(libnetconf2Error, "Building Python object from data reply failed.");
+        goto error;
+    }
+    // notif->tree = NULL;
+    module = PyImport_ImportModule("yang");
+    if (module == NULL) {
+        PyErr_SetString(libnetconf2Error, "Could not import libyang python module");
+        goto error;
+    }
+
+    result = PyObject_CallMethod(module, "create_new_Data_Node", "(O)", data);
+    Py_DECREF(module);
+    Py_DECREF(data);
+    if (result == NULL) {
+        PyErr_SetString(libnetconf2Error, "Could not create Data_Node object.");
+        goto error;
+    }
+
+    // nc_notif_free(notif);
+    return result;
+
+    error:
+    Py_XDECREF(data);
+    nc_notif_free(notif);
+    return NULL;
+}
+
+PyGILState_STATE state;
+
+static PyObject *notif_cb = NULL;
+
+static void on_notif_received(struct nc_session *session, const struct nc_notif *notif)
+{
+    PyObject *data = Py_None, *arglist;
+
+    state = PyGILState_Ensure();
+
+    if (notif_cb == NULL) {
+        return;
+    }
+    data = process_notif_data(notif);
+    arglist = Py_BuildValue("(s,O)", notif->datetime, data);
+    PyEval_CallObject(notif_cb, arglist);
+
+    Py_DECREF(arglist);
+    PyGILState_Release(state);
+}
+
+PyObject *
+ncRPCSubscribe(ncSessionObject *self, PyObject *args, PyObject *keywords)
+{
+    static char *kwlist[] = {"stream", "cond", "start", "stop", "callback", NULL};
+    struct nc_rpc *rpc;
+    struct nc_reply *reply;
+
+    PyObject *cb;
+
+    const char *stream = NULL, *cond = NULL, *start = NULL, *stop = NULL;
+
+    if (!PyArg_ParseTupleAndKeywords(args, keywords, "|ssssO:ncRPCSubscribe", kwlist,
+                                     &stream, &cond, &start, &stop, &cb)) {
+        return NULL;
+    }
+
+
+    rpc = nc_rpc_subscribe(stream, cond, start, stop, NC_PARAMTYPE_CONST);
+    if (!rpc) {
+        return NULL;
+    }
+
+    reply = rpc_send_recv(self->session, rpc);
+    nc_rpc_free(rpc);
+
+    if (!reply) {
+        Py_RETURN_FALSE;
+    }
+
+    Py_XINCREF(cb);        /* Add a reference to new callback */
+    Py_XDECREF(notif_cb);  /* Dispose of previous callback */
+    notif_cb = cb;
+    Py_XINCREF(notif_cb);
+    nc_recv_notif_dispatch(self->session, on_notif_received);
+
+    Py_RETURN_TRUE;
 }

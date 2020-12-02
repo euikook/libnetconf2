@@ -509,6 +509,14 @@ static PyMethodDef ncSessionMethods[] = {
      "Send NETCONF <edit-config> operation on the Session.\n\n"
      "ncRPCEditConfig(datastore, data, defop=None, testopt=None, erropt=None)\n"
      ":returns: None\n"},
+    {"rpcUser", (PyCFunction)ncRPCUser, METH_VARARGS | METH_KEYWORDS,
+     "Send NETCONF custom rpc operation on the Session.\n\n"
+     "ncRPCUser(data)\n"
+     ":returns: Reply from server\n"},
+    {"rpcSubscribe", (PyCFunction)ncRPCSubscribe, METH_VARARGS | METH_KEYWORDS,
+     "Send NETCONF <create-subscribe> rpc operation on the Session.\n\n"
+     "ncRPCSubscribe(stream=None, cond=None, start=None, stop=None)\n"
+     ":returns: Reply from server\n"},
     {NULL}  /* Sentinel */
 };
 
