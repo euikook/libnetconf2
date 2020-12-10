@@ -424,16 +424,21 @@ static PyObject *notif_cb = NULL;
 
 static void on_notif_received(struct nc_session *session, const struct nc_notif *notif)
 {
+    fprintf(stderr, "Callback Called\n");
     PyObject *data = Py_None, *arglist;
-
+    fprintf(stderr, "Callback Called\n");
     state = PyGILState_Ensure();
+    fprintf(stderr, "Callback Called\n");
 
     if (notif_cb == NULL) {
         return;
     }
+
     data = process_notif_data(notif);
     arglist = Py_BuildValue("(s,O)", notif->datetime, data);
+    fprintf(stderr, "Callback Called\n");
     PyEval_CallObject(notif_cb, arglist);
+    fprintf(stderr, "Callback Called\n");
 
     Py_DECREF(arglist);
     PyGILState_Release(state);
@@ -449,6 +454,8 @@ ncRPCSubscribe(ncSessionObject *self, PyObject *args, PyObject *keywords)
     PyObject *cb;
 
     const char *stream = NULL, *cond = NULL, *start = NULL, *stop = NULL;
+
+    fprintf(stdout, "CALL CALL CALL\n");
 
     if (!PyArg_ParseTupleAndKeywords(args, keywords, "|ssssO:ncRPCSubscribe", kwlist,
                                      &stream, &cond, &start, &stop, &cb)) {
@@ -472,7 +479,9 @@ ncRPCSubscribe(ncSessionObject *self, PyObject *args, PyObject *keywords)
     Py_XDECREF(notif_cb);  /* Dispose of previous callback */
     notif_cb = cb;
     Py_XINCREF(notif_cb);
-    nc_recv_notif_dispatch(self->session, on_notif_received);
 
+    fprintf(stdout, "DISPATCH \n");
+    nc_recv_notif_dispatch(self->session, on_notif_received);
+    fprintf(stdout, "DISPATCH \n");
     Py_RETURN_TRUE;
 }
