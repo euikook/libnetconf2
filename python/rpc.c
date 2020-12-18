@@ -89,6 +89,7 @@ err_reply_converter(struct nc_client_reply_error *reply)
     }
     free(reply->err); /* pointers to the data were moved, so we are freeing just a container for the data */
     reply->err = NULL;
+    reply->count = 0;
 
     return (PyObject*)result;
 }
@@ -138,7 +139,7 @@ process_reply_data(struct nc_reply *reply)
     return result;
 
 error:
-    Py_XDECREF(data);
+    if (data) Py_XDECREF(data);
     nc_reply_free(reply);
     return NULL;
 }
@@ -353,9 +354,9 @@ ncRPCUser(ncSessionObject *self, PyObject *args, PyObject *keywords)
         return NULL;
     }
 
-    fprintf(stderr, "reply->type: %d\n", reply->type);
-    lyd_print_file(stderr, ((struct nc_reply_data*)reply)->data, LYD_XML, LYP_FORMAT);
-    fprintf(stderr, "RPC PRINTED\n");
+    // fprintf(stderr, "reply->type: %d\n", reply->type);
+    // lyd_print_file(stdout, ((struct nc_reply_data*)reply)->data, LYD_XML, LYP_FORMAT);
+    // fprintf(stderr, "RPC PRINTED\n");
     return process_reply_data(reply);
 
 #if 0
@@ -424,21 +425,16 @@ static PyObject *notif_cb = NULL;
 
 static void on_notif_received(struct nc_session *session, const struct nc_notif *notif)
 {
-    fprintf(stderr, "Callback Called\n");
     PyObject *data = Py_None, *arglist;
-    fprintf(stderr, "Callback Called\n");
     state = PyGILState_Ensure();
-    fprintf(stderr, "Callback Called\n");
 
     if (notif_cb == NULL) {
         return;
     }
 
     data = process_notif_data(notif);
-    arglist = Py_BuildValue("(s,O)", notif->datetime, data);
-    fprintf(stderr, "Callback Called\n");
-    PyEval_CallObject(notif_cb, arglist);
-    fprintf(stderr, "Callback Called\n");
+    arglist = Py_BuildValue("(sO)", notif->datetime, data);
+    PyObject_CallObject(notif_cb, arglist);
 
     Py_DECREF(arglist);
     PyGILState_Release(state);
@@ -454,9 +450,6 @@ ncRPCSubscribe(ncSessionObject *self, PyObject *args, PyObject *keywords)
     PyObject *cb;
 
     const char *stream = NULL, *cond = NULL, *start = NULL, *stop = NULL;
-
-    fprintf(stdout, "CALL CALL CALL\n");
-
     if (!PyArg_ParseTupleAndKeywords(args, keywords, "|ssssO:ncRPCSubscribe", kwlist,
                                      &stream, &cond, &start, &stop, &cb)) {
         return NULL;
@@ -480,8 +473,6 @@ ncRPCSubscribe(ncSessionObject *self, PyObject *args, PyObject *keywords)
     notif_cb = cb;
     Py_XINCREF(notif_cb);
 
-    fprintf(stdout, "DISPATCH \n");
     nc_recv_notif_dispatch(self->session, on_notif_received);
-    fprintf(stdout, "DISPATCH \n");
     Py_RETURN_TRUE;
 }
